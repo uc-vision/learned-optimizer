@@ -10,7 +10,7 @@ import taichi as ti
 import torch
 from tqdm import tqdm
 from taichi_splatting.data_types import Gaussians2D, RasterConfig
-from taichi_splatting.examples.mlp import mlp
+from mlp import mlp
 from taichi_splatting.misc.renderer2d import project_gaussians2d
 
 from taichi_splatting.rasterizer.function import rasterize
@@ -35,8 +35,8 @@ def parse_args():
                         type=int,
                         default=4,
                         help='base epoch size (increases with t)')
-    parser.add_argument('--wandb_run_id', type=str, required=True, help='wandb run ID to load parameters from')
-    parser.add_argument('--project_name', type=str, required=True, help='project name to load parameters from wandb')
+    # parser.add_argument('--wandb_run_id', type=str, required=True, help='wandb run ID to load parameters from')
+    # parser.add_argument('--project_name', type=str, required=True, help='project name to load parameters from wandb')
     parser.add_argument('--max_epoch', type=int, default=16)
     parser.add_argument('--opacity_reg', type=float, default=0.0000)
     parser.add_argument('--scale_reg', type=float, default=10.0)
@@ -46,6 +46,10 @@ def parse_args():
     parser.add_argument('--eval', action='store_false', help = "enable the evaluation phase during training default at every 5 images, can change the number with --test x")
     parser.add_argument('--test', type=int, default=5, help = "run the test phase at every x images default 5")
     parser.add_argument('--profile', action='store_true')
+    parser.add_argument(
+        '--wandb',
+        action='store_true',
+        help='Log the gaussian and optimiser parameter to wandb')
     parser.add_argument('--method', type=str, default="mlp", help = "default mlp, other option mlp_unet"),
     args = parser.parse_args()
     return args
@@ -89,7 +93,9 @@ def element_sizes(t):
 
 def split_tensorclass(t, flat_tensor: torch.Tensor):
     sizes = element_sizes(t)
+    print(t)
     splits = [np.prod(s) for s in sizes.values()]
+    print(splits)
 
     tensors = torch.split(flat_tensor, splits, dim=1)
 
@@ -184,10 +190,11 @@ class Trainer:
 
                 grad,metrics = self.get_gradients(gaussians)
                 check_finite(grad, "grad")
-
+                
                 inputs = flatten_tensorclass(grad)
                 # metrics.append(metric)
                 with torch.no_grad():
+                    print(inputs)
                     step = self.optimizer_mlp(inputs)
                     step = split_tensorclass(gaussians, step)
                     metrics.append(metric)
@@ -248,6 +255,7 @@ def main():
                                     alpha_range=(0.5, 1.0),
                                     scale_factor=1.0).to(
                                         torch.device('cuda:0'))
+    print(gaussians)
     channels = sum(
         [np.prod(v.shape[1:], dtype=int) for k, v in gaussians.items()])
 

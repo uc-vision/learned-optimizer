@@ -10,7 +10,8 @@ from taichi_splatting.misc.renderer2d import project_gaussians2d
 from taichi_splatting.taichi_queue import TaichiQueue
 from taichi_splatting.tests.random_data import random_2d_gaussians
 from renderer2d import Gaussians2D
-from mlp import mlp, mlp_body
+from mlp import mlp_body, mlp
+import wandb
 from taichi_splatting.rasterizer.function import rasterize
 
 import os
@@ -438,21 +439,53 @@ class Trainer:
 
                 metrics.append(self.render_step(gaussians - step))
 
+                log_adam_behavior_to_wandb(gaussians=gaussians,
+                                   adam_optimizer=self.mlp_opt,
+                                   iter=iteration+epoch_size,
+                                   rendered_image=raster.image)
+
             self.mlp_opt.step()
             gaussians = gaussians - step * step_size
 
         return gaussians, mean_dicts(metrics)
 
+def log_adam_behavior_to_wandb(gaussians, adam_optimizer, iter,
+                               rendered_image):
+    """
+    Logs Adam optimizer behavior to wandb.
+    """
+    log_data = {"iter": iter}
 
+    # Iterate over parameter groups to log weights and biases
+    for idx, param_group in enumerate(adam_optimizer.param_groups):
+        for param in param_group['params']:
+            if param.grad is not None:
+                if param.ndimension() > 1:  # Likely weights
+                    log_data[f"param_group_{idx}/weights_mean"] = param.data.mean().item()
+                    log_data[f"param_group_{idx}/weights_std"] = param.data.std().item()
+                    log_data[f"param_group_{idx}/weights_grad_mean"] = param.grad.mean().item()
+                    log_data[f"param_group_{idx}/weights_grad_std"] = param.grad.std().item()
+                elif param.ndimension() == 1:  # Likely biases
+                    log_data[f"param_group_{idx}/biases_mean"] = param.data.mean().item()
+                    log_data[f"param_group_{idx}/biases_std"] = param.data.std().item()
+                    log_data[f"param_group_{idx}/biases_grad_mean"] = param.grad.mean().item()
+                    log_data[f"param_group_{idx}/biases_grad_std"] = param.grad.std().item()
+    log_data[f"iter_{iter}/rendered_image"] = wandb.Image(
+        rendered_image.cpu().numpy(), caption=f"Rendered Image at Iteration {iter}"
+    )
+    # Log to wandb
+    wandb.log(log_data)
 def main():
 
     torch.set_printoptions(precision=4, sci_mode=True)
 
     cmd_args = parse_args()
+
     device = torch.device('cuda:0')
 
     torch.set_grad_enabled(False)
 
+    #Set up an initial image as a place holder which is updated later with the reference one
     ref_image = cv2.imread(
         '/csse/users/pwl25/pear/images/DSC_1366_12kv2r16k_7.jpg')
     assert ref_image is not None, f'Could not read {cmd_args.image_file}'
@@ -464,6 +497,7 @@ def main():
                      debug=cmd_args.debug,
                      device_memory_GB=0.1)
 
+    #Display the image
     if cmd_args.show:
         cv2.namedWindow('rendered', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('rendered', w, h)
@@ -471,12 +505,14 @@ def main():
     torch.manual_seed(cmd_args.seed)
     torch.cuda.random.manual_seed(cmd_args.seed)
 
+    #Initialize gaussian
     gaussians = random_2d_gaussians(cmd_args.n, (w, h),
                                     alpha_range=(0.5, 1.0),
                                     scale_factor=1.0).to(
                                         torch.device('cuda:0'))
-    n_inputs = sum(
-        [np.prod(v.shape[1:], dtype=int) for k, v in gaussians.items()])
+
+    #Calculate the number of inputs and output to  used in the MLP
+    n_inputs = sum([np.prod(v.shape[1:], dtype=int) for k, v in gaussians.items()])
 
     # Create the MLP
     optimizer = GaussianMixer(inputs=n_inputs,
@@ -486,16 +522,29 @@ def main():
                               method = cmd_args.method).to(device)
     optimizer.to(device=device)
 
+    #The function read the image from the given folder
     dataset_folder = cmd_args.image_file  # Using the argument as a folder path
+    
     image_files = [
         os.path.join(dataset_folder, f) for f in os.listdir(dataset_folder)
         if f.endswith(('.png', '.jpg', '.jpeg'))
     ]
 
+    lr = 0.00001
     optimizer = torch.compile(optimizer)
-    optimizer_opt = torch.optim.Adam(optimizer.parameters(), lr=0.00001)
+    optimizer_opt = torch.optim.Adam(optimizer.parameters(), lr=lr)
 
     config = RasterConfig()
+
+    # initialize the the wandb when the cmd is given
+    if cmd_args.wandb is True:
+        wandb.init(project="gaussian-mixer",
+                   config={
+                       "learning_rate": lr,
+                       "architecture": "Gaussian2D",
+                       "optimizer": "Adam optimized mlp",
+                       "ref_image": cmd_args.image_file
+                   })
 
     trainer = Trainer(optimizer_mlp=optimizer,
                       mlp_opt=optimizer_opt,
@@ -503,6 +552,8 @@ def main():
                       config=config,
                       opacity_reg=cmd_args.opacity_reg,
                       scale_reg=cmd_args.scale_reg)
+
+
     epochs = [cmd_args.epoch for _ in range(cmd_args.iters // cmd_args.epoch)]
 
     iteration = 0
@@ -522,6 +573,7 @@ def main():
                                         alpha_range=(0.5, 1.0),
                                         scale_factor=1.0).to(
                                             torch.device('cuda:0'))
+        
         pbar = tqdm(total=cmd_args.iters, desc="Initializing")
 
         for epoch_size in epochs:
