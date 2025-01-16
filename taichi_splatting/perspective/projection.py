@@ -116,8 +116,6 @@ def project_to_image_function(torch_dtype=torch.float32, clamp_margin=0.15, blur
           alpha=lib.sigmoid(alpha_logit[idx][0]),
       )
 
-
-
   class _module_function(torch.autograd.Function):
 
     @queued
@@ -177,7 +175,6 @@ def project_to_image_function(torch_dtype=torch.float32, clamp_margin=0.15, blur
           T_camera_world, 
           projection, lib.vec2(ctx.image_size),
           points, depth)
-
 
         return (*[tensor.grad for tensor in gaussian_tensors], 
                 T_camera_world.grad, projection.grad,
