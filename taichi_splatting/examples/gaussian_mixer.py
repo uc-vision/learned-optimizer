@@ -85,7 +85,7 @@ class AttentionGate(nn.Module):
         theta_x = self.theta_x(x)
         phi_g = self.phi_g(g)
         f = self.relu(theta_x + phi_g)
-        # print(f"f: {f.shape}")
+
         psi = self.sigmoid(self.psi(f))
         return x * psi
 
@@ -371,8 +371,7 @@ class Trainer:
 
             l1 = torch.nn.functional.l1_loss(raster.image, self.ref_image)
             mse = torch.nn.functional.mse_loss(raster.image, self.ref_image)
-            # # print(raster.image.shape)
-            # # print(self.ref_image.shape)
+
             ssim = 1 - fused_ssim(raster.image.unsqueeze(0),
                                   self.ref_image.unsqueeze(0),
                                   train=True)
@@ -420,7 +419,7 @@ class Trainer:
                 gaussians = gaussians - step * step_size
         return gaussians, mean_dicts(metrics)
 
-    def train_epoch(self, gaussians, step_size=0.01, epoch_size=100):
+    def train_epoch(self, gaussians, step_size=0.01, epoch_size=100, iter=100):
         metrics = []
         for i in range(epoch_size):
 
@@ -439,42 +438,57 @@ class Trainer:
 
                 metrics.append(self.render_step(gaussians - step))
 
-                log_adam_behavior_to_wandb(gaussians=gaussians,
-                                   adam_optimizer=self.mlp_opt,
-                                   iter=iteration+epoch_size,
-                                   rendered_image=raster.image)
-
+                
             self.mlp_opt.step()
             gaussians = gaussians - step * step_size
 
         return gaussians, mean_dicts(metrics)
 
-def log_adam_behavior_to_wandb(gaussians, adam_optimizer, iter,
-                               rendered_image):
+def log_adam_behavior_to_wandb(image_id, gaussians, adam_optimizer, iter, rendered_image, psnr, loss):
     """
-    Logs Adam optimizer behavior to wandb.
+    Logs Adam optimizer behavior to wandb, associating logs with a specific dataset image.
+    
+    Args:
+        image_id (str): A unique identifier for the dataset image being processed.
+        gaussians: The model parameters being optimized.
+        adam_optimizer: The optimizer used for training.
+        iter (int): Current training iteration.
+        rendered_image (torch.Tensor): The rendered image associated with this iteration.
+        psnr (float): Peak Signal-to-Noise Ratio for the rendered image.
+        loss (float): Loss value at the current iteration.
     """
-    log_data = {"iter": iter}
+    log_data = {
+        "iteration": iter,
+        "image_id": image_id,
+        f"image_{image_id}/iter_{iter}/psnr": psnr,
+        f"image_{image_id}/iter_{iter}/loss": loss,
+    }
 
     # Iterate over parameter groups to log weights and biases
     for idx, param_group in enumerate(adam_optimizer.param_groups):
         for param in param_group['params']:
             if param.grad is not None:
                 if param.ndimension() > 1:  # Likely weights
-                    log_data[f"param_group_{idx}/weights_mean"] = param.data.mean().item()
-                    log_data[f"param_group_{idx}/weights_std"] = param.data.std().item()
-                    log_data[f"param_group_{idx}/weights_grad_mean"] = param.grad.mean().item()
-                    log_data[f"param_group_{idx}/weights_grad_std"] = param.grad.std().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/weights_mean"] = param.data.mean().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/weights_std"] = param.data.std().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/weights_grad_mean"] = param.grad.mean().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/weights_grad_std"] = param.grad.std().item()
                 elif param.ndimension() == 1:  # Likely biases
-                    log_data[f"param_group_{idx}/biases_mean"] = param.data.mean().item()
-                    log_data[f"param_group_{idx}/biases_std"] = param.data.std().item()
-                    log_data[f"param_group_{idx}/biases_grad_mean"] = param.grad.mean().item()
-                    log_data[f"param_group_{idx}/biases_grad_std"] = param.grad.std().item()
-    log_data[f"iter_{iter}/rendered_image"] = wandb.Image(
-        rendered_image.cpu().numpy(), caption=f"Rendered Image at Iteration {iter}"
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/biases_mean"] = param.data.mean().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/biases_std"] = param.data.std().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/biases_grad_mean"] = param.grad.mean().item()
+                    log_data[f"image_{image_id}/iter_{iter}/param_group_{idx}/biases_grad_std"] = param.grad.std().item()
+    
+    # Log the rendered image associated with this dataset image
+    log_data[f"image_{image_id}/iter_{iter}/rendered_image"] = wandb.Image(
+        rendered_image.cpu().numpy(), caption=f"Rendered Image for Image {image_id} at Iteration {iter}"
     )
+
     # Log to wandb
     wandb.log(log_data)
+
+
+
 def main():
 
     torch.set_printoptions(precision=4, sci_mode=True)
@@ -591,13 +605,23 @@ def main():
 
             else:
                 pbar.set_description(f"Training Progress")
-                gaussians, train_metrics = trainer.train_epoch(
-                    gaussians, epoch_size=epoch_size, step_size=step_size)
+                gaussians, train_metrics = trainer.train_epoch(gaussians, epoch_size=epoch_size, step_size=step_size,iter=iteration)
+                image = trainer.render(gaussians).image
+                
 
-            image = trainer.render(gaussians).image
+            
             if cmd_args.show:
                 display_image('rendered', image)
-
+            log_adam_behavior_to_wandb(
+                            image_id=num,
+                            gaussians=gaussians,
+                            adam_optimizer=trainer.mlp_opt,
+                            iter=iter,
+                            rendered_image=image,
+                            psnr=psnr(ref_image, image).item(),
+                            loss = train_metrics['loss']
+                        )
+            
             metrics['CPSNR'] = psnr(ref_image, image).item()
             metrics['n'] = gaussians.batch_size[0]
             metrics.update(train_metrics)

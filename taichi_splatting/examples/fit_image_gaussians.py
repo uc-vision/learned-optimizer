@@ -93,9 +93,10 @@ def element_sizes(t):
 
 def split_tensorclass(t, flat_tensor: torch.Tensor):
     sizes = element_sizes(t)
-    print(t)
-    splits = [np.prod(s) for s in sizes.values()]
-    print(splits)
+
+    splits = [int(np.prod(s)) for s in sizes.values()]
+
+    
 
     tensors = torch.split(flat_tensor, splits, dim=1)
 
