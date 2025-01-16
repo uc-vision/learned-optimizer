@@ -195,7 +195,7 @@ class Trainer:
                 inputs = flatten_tensorclass(grad)
                 # metrics.append(metric)
                 with torch.no_grad():
-                    print(inputs)
+                    
                     step = self.optimizer_mlp(inputs)
                     step = split_tensorclass(gaussians, step)
                     metrics.append(metric)
@@ -256,7 +256,7 @@ def main():
                                     alpha_range=(0.5, 1.0),
                                     scale_factor=1.0).to(
                                         torch.device('cuda:0'))
-    print(gaussians)
+
     channels = sum(
         [np.prod(v.shape[1:], dtype=int) for k, v in gaussians.items()])
 
@@ -271,7 +271,7 @@ def main():
         output_scale=1e-12)
     optimizer.to(device=device)
 
-    print(optimizer)
+
 
     optimizer = torch.compile(optimizer)
     optimizer_opt = torch.optim.Adam(optimizer.parameters(), lr=0.0001)

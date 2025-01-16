@@ -9,7 +9,10 @@ import argparse
 import taichi as ti
 import json
 import torch
+import numpy as np
+from gaussian_mixer import GaussianMixer
 from tqdm import tqdm
+from fit_image_gaussians import parse_args, partial, log_lerp, psnr, display_image, flatten_tensorclass, split_tensorclass, mean_dicts, lerp
 from taichi_splatting.data_types import Gaussians2D, RasterConfig
 from taichi_splatting.misc.renderer2d import point_basis, project_gaussians2d, uniform_split_gaussians2d
 import wandb
@@ -127,7 +130,11 @@ def train_epoch(opt: FractionalAdam,
         opt.zero_grad()
 
         with torch.enable_grad():
+            
             gaussians = Gaussians2D.from_tensordict(params.tensors)
+
+            gaussians_clone = gaussians.clone().detach()
+            gaussians.z_depth.requires_grad_(True) 
             gaussians2d = project_gaussians2d(gaussians)
 
             raster = rasterize(gaussians2d=gaussians2d,
@@ -147,6 +154,12 @@ def train_epoch(opt: FractionalAdam,
         check_finite(gaussians, 'gaussians')
         visible = (raster.visibility > 1e-8).nonzero().squeeze(1)
 
+
+        
+
+
+
+
         if isinstance(opt, VisibilityOptimizer):
             opt.step(indexes=visible,
                      visibility=raster.visibility[visible],
@@ -163,6 +176,36 @@ def train_epoch(opt: FractionalAdam,
         # point_heuristics *= raster.visibility.clamp(1e-8).unsqueeze(1).sqrt()
         visibility += raster.visibility
         point_heuristics += raster.point_heuristics
+
+
+            
+        params.mlp_opt.zero_grad()
+        model_step = gaussians_clone - gaussians
+        
+        # Flatten gradients for MLP input
+        grad = flatten_tensorclass(gaussians.grad)
+        gaussians[:] = gaussians_clone
+        mlp = params.mlp[0] if isinstance(params.mlp, tuple) else params.mlp
+
+        with torch.enable_grad():
+            # Predict step using MLP
+            predicted_step = mlp(grad, gaussians,
+                                                ref_image.shape[:2],
+                                                config,
+                                                ref_image)
+            predicted_step = split_tensorclass(gaussians, predicted_step)
+            
+            
+
+            # Compute supervised loss for MLP
+            mlp_loss = torch.nn.functional.l1_loss(flatten_tensorclass(model_step), flatten_tensorclass(predicted_step))
+            mlp_loss.backward()
+
+        params.mlp_opt.step()
+        gaussians -= predicted_step
+
+
+
     if loggable is True:
         log_adam_behavior_to_wandb(gaussians=gaussians,
                                    adam_optimizer=opt,
@@ -302,7 +345,9 @@ def main():
                      device_memory_GB=0.1,
                      threaded=cmd_args.threaded)
 
-    print(f'Image size: {w}x{h}')
+    
+
+    # print(f'Image size: {w}x{h}')
 
     if cmd_args.show:
         cv2.namedWindow('rendered', cv2.WINDOW_NORMAL)
@@ -326,6 +371,18 @@ def main():
 
     # params = ParameterClass(gaussians.to_tensordict(),
     #       parameter_groups, optimizer=SparseAdam, betas=(0.9, 0.95), eps=1e-16, bias_correction=True)
+    n_inputs = sum([np.prod(v.shape[1:], dtype=int) for k, v in gaussians.items()])
+    
+    mlp = GaussianMixer(inputs=n_inputs,
+                              outputs=n_inputs,
+                              n_render=16,
+                              n_base=128,
+                              method = "mlp").to(device)
+    mlp.to(device=device)
+
+
+    mlp = torch.compile(mlp)
+    mlp_opt = torch.optim.Adam(mlp.parameters(), lr=0.001)
 
     params = ParameterClass(gaussians.to_tensordict(),
                             parameter_groups,
@@ -333,6 +390,8 @@ def main():
                             vis_beta=0.9,
                             betas=(0.9, 0.9),
                             eps=1e-16,
+                            mlp=mlp,
+                            mlp_opt = mlp_opt,
                             bias_correction=False)
 
     keys = set(params.keys())

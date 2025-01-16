@@ -127,22 +127,27 @@ class Trainer:
                 gaussians = gaussians - step * step_size
         return gaussians, mean_dicts(metrics)
 
-    def train_epoch(self, gaussians, step_size=0.01, epoch_size=20,adam_weight=1.0,extracted_data = None, iter = 0,index = 0):
+    def train_epoch(self, gaussians, step_size=0.01, epoch_size=100,adam_weight=1.0):
         
         metrics = []
         for i in range(epoch_size):
+            self.adam_optimizer.zero_grad()
+            gaussians.requires_grad_(True)
 
-            # self.adam_optimizer.zero_grad()
-            # gaussians.requires_grad_(True)
+            # check_finite(grad, "grad")
+
+            # Store initial Gaussian state
             gaussians_clone = gaussians.clone().detach()
-            # self.render_step(gaussians=gaussians)
-            # self.adam_optimizer.step()
-            # adam_step = gaussians_clone - gaussians
+            
+            self.render_step(gaussians=gaussians)
+            # print(gaussians.position.grad.sum())
 
-            extract_gaussian = reconstruct_gaussian (extracted_data=extracted_data,iter=iter,index = index,gaussian=gaussians_clone)
+            self.adam_optimizer.step()
+            adam_step = gaussians_clone - gaussians
 
 
-            gaussians[:] = gaussians_clone# Undo self.adam_optimizer.step()
+            # Undo self.adam_optimizer.step()
+            gaussians[:] = gaussians_clone
 
             # Train MLP to mimic Adam step
             self.mlp_opt.zero_grad()
