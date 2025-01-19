@@ -29,12 +29,13 @@ class ParameterClass():
                parameter_groups:Dict[str, Dict], 
                optimizer_state:Optional[Tuple[TensorDict, Dict]]=None,
                optimizer = optim.Optimizer,
-
+               mlp = torch.nn.Module,
+               mlp_opt= torch.optim.Optimizer,
                **optim_kwargs):
 
     self.tensors:TensorDict = as_parameters(tensors, parameter_groups.keys())
-
-
+    self.mlp_opt = mlp_opt
+    self.mlp = mlp
     param_groups = [
       dict(params=[self.tensors[name]], name=name, **group)
         for name, group in parameter_groups.items()
