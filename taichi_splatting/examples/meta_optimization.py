@@ -76,8 +76,6 @@ class Trainer:
 
             l1 = torch.nn.functional.l1_loss(raster.image, self.ref_image)
             mse = torch.nn.functional.mse_loss(raster.image, self.ref_image)
-            # # print(raster.image.shape)
-            # # print(self.ref_image.shape)
             ssim = 1 - fused_ssim(raster.image.unsqueeze(0),
                                   self.ref_image.unsqueeze(0),
                                   train=True)
@@ -140,7 +138,6 @@ class Trainer:
             gaussians_clone = gaussians.clone().detach()
             
             self.render_step(gaussians=gaussians)
-            # print(gaussians.position.grad.sum())
 
             self.adam_optimizer.step()
             adam_step = gaussians_clone - gaussians
@@ -179,20 +176,7 @@ class Trainer:
             # Track metrics
             metrics.append(metric)
         return gaussians, mean_dicts(metrics)
-def reconstruct_gaussian(extracted_data, iter, index,gaussian):
-    gaussian_data = extracted_data["history"][index]
 
-    # Initialize the Gaussians2D object
-    c = gaussian_data[f"iter_{iter}/alpha_logit_value"]['values']
-    # Convert logged histograms back to tensors
-    gaussians.alpha_logit = torch.tensor(np.array(gaussian_data[f"iter_{iter}/alpha_logit_value"]["values"]), dtype=torch.float32)
-    gaussians.feature = torch.tensor(np.array(gaussian_data[f"iter_{iter}/feature_value"]["values"]), dtype=torch.float32)
-    gaussians.log_scaling = torch.tensor(np.array(gaussian_data[f"iter_{iter}/log_scaling_value"]["values"]), dtype=torch.float32)
-    gaussians.position = torch.tensor(np.array(gaussian_data[f"iter_{iter}/position_value"]["values"]), dtype=torch.float32)
-    gaussians.rotation = torch.tensor(np.array(gaussian_data[f"iter_{iter}/rotation_value"]["values"]), dtype=torch.float32)
-    gaussians.z_depth = torch.tensor(np.array(gaussian_data[f"iter_{iter}/z_depth_value"]["values"]), dtype=torch.float32)
-
-    return gaussians
 def make_epochs(total_iters, first_epoch, max_epoch):
     iteration = 0
     epochs = []

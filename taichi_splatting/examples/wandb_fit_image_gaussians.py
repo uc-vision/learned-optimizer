@@ -133,8 +133,9 @@ def train_epoch(opt: FractionalAdam,
             
             gaussians = Gaussians2D.from_tensordict(params.tensors)
 
-            gaussians_clone = gaussians.clone().detach()
+            
             gaussians.z_depth.requires_grad_(True) 
+            gaussians_clone = gaussians.clone().detach()
             gaussians2d = project_gaussians2d(gaussians)
 
             raster = rasterize(gaussians2d=gaussians2d,
@@ -155,11 +156,7 @@ def train_epoch(opt: FractionalAdam,
         visible = (raster.visibility > 1e-8).nonzero().squeeze(1)
 
 
-        
-
-
-
-
+    
         if isinstance(opt, VisibilityOptimizer):
             opt.step(indexes=visible,
                      visibility=raster.visibility[visible],
